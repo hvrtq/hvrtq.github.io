@@ -1,375 +1,545 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Goblin Coffee Run</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goblin Coffee Blaster 3D</title>
 <style>
+  :root { --bg:#14102a; --panel:#241c46; --accent:#7be06a; --text:#f4f0ff; --warn:#ff6a5a; }
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: #1d2330;
-    color: #f2f2f2;
-    font-family: Arial, Helvetica, sans-serif;
-  }
-  h1 { margin: 0 0 12px; font-size: 26px; }
-  #hud {
-    width: 800px;
-    max-width: 100%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    background: #2b3346;
-    border-radius: 8px 8px 0 0;
-    font-size: 18px;
-    font-weight: bold;
-  }
-  #hud span { min-width: 110px; }
-  #startBtn {
-    padding: 6px 16px;
-    font-size: 16px;
-    font-weight: bold;
-    border: none;
-    border-radius: 6px;
-    background: #2e7d32;
-    color: #fff;
-    cursor: pointer;
-  }
-  #startBtn:hover { background: #1b5e20; }
-  canvas {
-    display: block;
-    width: 800px;
-    max-width: 100%;
-    background: #87c8ee;
-    border-radius: 0 0 8px 8px;
-  }
-  p.help { margin-top: 10px; color: #b8c0d0; font-size: 14px; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: Arial, Helvetica, sans-serif;
+         display:flex; justify-content:center; padding:14px 8px; }
+  #wrap { width:800px; max-width:100%; }
+  #hud { display:flex; align-items:center; gap:18px; background:var(--panel); padding:8px 14px;
+         border-radius:8px 8px 0 0; font-weight:bold; font-size:18px; border-bottom:3px solid #3b2f6e; }
+  #hud span { white-space:nowrap; }
+  #hud .grow { flex:1; }
+  #lives { color:var(--warn); letter-spacing:2px; }
+  #time.low { color:var(--warn); }
+  button { font-family:Arial, Helvetica, sans-serif; font-weight:bold; font-size:16px; cursor:pointer;
+           background:var(--accent); color:#10240c; border:0; border-radius:6px; padding:8px 18px; }
+  button:hover { filter:brightness(1.1); }
+  button:focus-visible { outline:3px solid #fff; }
+  #stage { position:relative; width:800px; height:500px; max-width:100%; }
+  canvas { display:block; width:100%; height:auto; background:#000; cursor:crosshair; }
+  #overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+             text-align:center; background:rgba(15,10,40,0.78); padding:20px; }
+  #overlay h1 { font-size:46px; margin:0 0 10px; color:var(--accent); text-shadow:0 4px 0 #1b4a18; }
+  #overlay.lose h1 { color:var(--warn); text-shadow:0 4px 0 #5a140c; }
+  #overlay p { font-size:16px; line-height:1.5; margin:4px 0; max-width:560px; }
+  #overlay button { margin-top:16px; font-size:22px; padding:12px 34px; }
+  #help { font-size:13px; color:#b9b0e0; margin:8px 2px; line-height:1.5; }
+  kbd { background:#3b2f6e; padding:1px 6px; border-radius:3px; }
 </style>
 </head>
 <body>
-  <h1>Goblin Coffee Run</h1>
+<div id="wrap">
   <div id="hud">
-    <span id="score">Score: 0</span>
+    <span id="score">Score: 0 / 8</span>
     <span id="lives">Lives: 3</span>
-    <span id="timer">Time: 45</span>
-    <button id="startBtn">Start</button>
+    <span id="time">Time: 45</span>
+    <span class="grow"></span>
+    <button id="restart" type="button">Restart</button>
   </div>
-  <canvas id="game" width="800" height="500"></canvas>
-  <p class="help">Move: ← → or A / D &nbsp;|&nbsp; Restart: R or the button &nbsp;|&nbsp; Catch 8 coffees, dodge assignments!</p>
-
+  <div id="stage">
+    <canvas id="c" width="800" height="500" tabindex="0"></canvas>
+    <div id="overlay">
+      <h1 id="ovTitle">GOBLIN COFFEE BLASTER</h1>
+      <p id="ovText">You are a goblin with a coffee blaster. Collect <b>8 coffees</b> in <b>45 seconds</b>. Shoot the flying assignment papers before they hit you. You have 3 lives.</p>
+      <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows move, mouse or <kbd>Q</kbd><kbd>E</kbd> look, <kbd>Space</kbd> / click shoot, <kbd>R</kbd> restart</p>
+      <button id="startBtn" type="button">Start</button>
+    </div>
+  </div>
+  <div id="help">Click the game to capture the mouse. Keyboard only works too: W/S or Up/Down move, A/D strafe, Q/E or Left/Right turn, Space fires.</div>
+</div>
 <script>
 (function () {
-  const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  const GROUND = H - 40;
+'use strict';
+const W = 800, H = 500, F = 420, NEAR = 0.15, ARENA = 20, GAME_TIME = 45, WIN = 8;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const FOG = [150, 175, 215];
+const FOG_NEAR = 8, FOG_FAR = 38;
 
-  const scoreEl = document.getElementById('score');
-  const livesEl = document.getElementById('lives');
-  const timerEl = document.getElementById('timer');
-  const startBtn = document.getElementById('startBtn');
+let state = 'ready';
+const P = { x: 0, z: 0, yaw: 0, pitch: 0 };
+let score, lives, timeLeft, elapsed, coffees, papers, parts, texts, friends;
+let shotT = 0, recoil = 0, shake = 0, flash = 0, bobT = 0, moveAmt = 0, cd = 0, shredded = 0, spawnT = 0, now = 0;
+const keys = {};
+let mouseHeld = false;
+let S = 0, Cc = 1, hor = H / 2, CAMY = 1.6;
 
-  // Game settings
-  const START_LIVES = 3;
-  const TIME_LIMIT = 45;     // seconds
-  const WIN_SCORE = 8;       // coffees needed to win
-  const SPAWN_INTERVAL = 0.8; // seconds between spawns
+const PILLARS = [
+  [-7, 6, 4, [150, 90, 200]], [7, 6, 3, [230, 140, 70]], [-7, -6, 3, [70, 170, 200]], [7, -6, 5, [200, 90, 130]],
+  [0, 12, 4, [110, 190, 120]], [0, -12, 3, [230, 190, 80]], [-14, 0, 5, [130, 110, 220]], [14, 0, 4, [90, 200, 170]],
+  [-13, 13, 3, [220, 110, 90]], [13, -13, 4, [150, 90, 200]], [13, 13, 5, [70, 170, 200]], [-13, -13, 4, [230, 140, 70]],
+  [3, 3.5, 1, [160, 160, 190]], [-3.5, -3, 1, [160, 160, 190]]
+].map(a => ({ x: a[0], z: a[1], h: a[2], hw: 0.9, col: a[3] }));
 
-  // State: 'start' | 'playing' | 'won' | 'lost'
-  let state = 'start';
-  let score, lives, timeLeft, objects, spawnTimer, messages, endReason;
+const CLOUDS = []; for (let i = 0; i < 9; i++) CLOUDS.push({ az: i * 0.72 + rnd(0, .3), el: rnd(0.35, 0.8), w: rnd(50, 110) });
+const SAYS = ['Get the coffee!', 'Watch out, essay!', 'Nice shot!', 'Mmm, caffeine!', 'Shred those papers!', 'Eight cups to win!', 'Zoom zoom!', 'Homework incoming!'];
+const FRIEND_DEF = [
+  { tun: [200, 80, 60], skin: [90, 170, 70] }, { tun: [70, 110, 200], skin: [110, 185, 85] }, { tun: [220, 170, 50], skin: [75, 150, 80] }
+];
 
-  const goblin = { x: W / 2, y: GROUND, w: 50, h: 60, speed: 320 };
-  const keys = { left: false, right: false };
+// ---------- helpers ----------
+function fogT(d) { return clamp((d - FOG_NEAR) / (FOG_FAR - FOG_NEAR), 0, 1); }
+function fogCol(c, d, shade) {
+  const t = fogT(d), s = shade === undefined ? 1 : shade;
+  return 'rgb(' + ((c[0] * s * (1 - t) + FOG[0] * t) | 0) + ',' + ((c[1] * s * (1 - t) + FOG[1] * t) | 0) + ',' + ((c[2] * s * (1 - t) + FOG[2] * t) | 0) + ')';
+}
+function cam(x, y, z) { const dx = x - P.x, dz = z - P.z; return { x: dx * Cc - dz * S, y: y - CAMY, z: dx * S + dz * Cc }; }
+function scr(c) { const k = F / c.z; return [W / 2 + c.x * k, hor - c.y * k]; }
 
-  function resetGame() {
-    score = 0;
-    lives = START_LIVES;
-    timeLeft = TIME_LIMIT;
-    objects = [];
-    messages = [];
-    spawnTimer = 0;
-    endReason = '';
-    goblin.x = W / 2;
-    keys.left = keys.right = false;
-    updateHUD();
+function poly(pts, fill, stroke) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const ain = a.z >= NEAR, bin = b.z >= NEAR;
+    if (ain) out.push(a);
+    if (ain !== bin) { const t = (NEAR - a.z) / (b.z - a.z); out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: NEAR }); }
   }
-
-  function startGame() {
-    resetGame();
-    state = 'playing';
-    startBtn.textContent = 'Restart';
-    startBtn.blur(); // so Space/Enter don't re-trigger the button
+  if (out.length < 3) return;
+  ctx.beginPath();
+  for (let i = 0; i < out.length; i++) { const k = F / out[i].z; ctx.lineTo(W / 2 + out[i].x * k, hor - out[i].y * k); }
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+function quadXZ(x1, z1, x2, z2, y0, y1, fill, stroke) {
+  poly([cam(x1, y0, z1), cam(x2, y0, z2), cam(x2, y1, z2), cam(x1, y1, z1)], fill, stroke);
+}
+function hitPillars(o, r) {
+  for (const p of PILLARS) {
+    const nx = clamp(o.x, p.x - p.hw, p.x + p.hw), nz = clamp(o.z, p.z - p.hw, p.z + p.hw);
+    const dx = o.x - nx, dz = o.z - nz, d2 = dx * dx + dz * dz;
+    if (d2 < r * r) {
+      if (d2 > 1e-6) { const d = Math.sqrt(d2); o.x = nx + dx / d * r; o.z = nz + dz / d * r; } else o.x += r;
+    }
   }
-
-  function updateHUD() {
-    scoreEl.textContent = 'Score: ' + score + ' / ' + WIN_SCORE;
-    livesEl.textContent = 'Lives: ' + lives;
-    timerEl.textContent = 'Time: ' + Math.ceil(timeLeft);
+  const lim = ARENA - r - 0.3; o.x = clamp(o.x, -lim, lim); o.z = clamp(o.z, -lim, lim);
+}
+function freeSpot(minPlayer) {
+  for (let i = 0; i < 40; i++) {
+    const x = rnd(-17, 17), z = rnd(-17, 17);
+    if (Math.hypot(x - P.x, z - P.z) < minPlayer) continue;
+    let ok = true;
+    for (const p of PILLARS) if (Math.abs(x - p.x) < p.hw + 1.2 && Math.abs(z - p.z) < p.hw + 1.2) { ok = false; break; }
+    if (ok) return { x, z };
   }
+  return { x: 10, z: 0 };
+}
 
-  // ---------- Input ----------
-  document.addEventListener('keydown', function (e) {
-    const k = e.key.toLowerCase();
-    if (k === 'arrowleft' || k === 'a') { keys.left = true; e.preventDefault(); }
-    if (k === 'arrowright' || k === 'd') { keys.right = true; e.preventDefault(); }
-    if (k === 'r') startGame();
+// ---------- particles / text ----------
+function burst(x, y, z, n, cols, speed, grav, life, size) {
+  for (let i = 0; i < n; i++) {
+    const a = rnd(0, 6.283), u = rnd(-0.3, 1), sp = rnd(0.3, 1) * speed;
+    parts.push({ x, y, z, vx: Math.cos(a) * sp, vy: u * speed * 0.8 + 1, vz: Math.sin(a) * sp, g: grav, life, max: life, size, col: cols[(Math.random() * cols.length) | 0] });
+  }
+}
+function addText(x, y, z, str, col) { texts.push({ x, y, z, str, col, life: 1.3 }); }
+
+// ---------- game flow ----------
+function reset(play) {
+  P.x = 0; P.z = 0; P.yaw = 0; P.pitch = 0;
+  score = 0; lives = 3; timeLeft = GAME_TIME; elapsed = 0; shredded = 0;
+  coffees = []; papers = []; parts = []; texts = []; friends = [];
+  shotT = recoil = shake = flash = cd = 0; spawnT = 1.2;
+  for (let i = 0; i < 4; i++) { const s = freeSpot(4); coffees.push({ x: s.x, z: s.z, ph: rnd(0, 6) }); }
+  FRIEND_DEF.forEach((d, i) => {
+    const s = freeSpot(5);
+    friends.push({ x: s.x, z: s.z, tx: s.x, tz: s.z, d, ph: rnd(0, 6), say: '', sayT: 0, nextSay: rnd(1, 4) + i });
   });
-  document.addEventListener('keyup', function (e) {
-    const k = e.key.toLowerCase();
-    if (k === 'arrowleft' || k === 'a') keys.left = false;
-    if (k === 'arrowright' || k === 'd') keys.right = false;
-  });
-  startBtn.addEventListener('click', startGame);
+  state = play ? 'play' : 'ready';
+  $('overlay').style.display = play ? 'none' : 'flex';
+  $('overlay').className = '';
+  if (play) { try { const r = cv.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {} cv.focus(); }
+  updateHud();
+}
+function end(result) {
+  state = result;
+  mouseHeld = false;
+  try { document.exitPointerLock(); } catch (e) {}
+  const ov = $('overlay');
+  ov.style.display = 'flex';
+  ov.className = result === 'won' ? 'win' : 'lose';
+  $('ovTitle').textContent = result === 'won' ? 'YOU WIN!' : (lives <= 0 ? 'GAME OVER' : "TIME'S UP!");
+  $('ovText').textContent = (result === 'won' ? 'Caffeinated! ' : 'The essays got you. ') + 'Coffee: ' + score + ' / ' + WIN + '. Papers shredded: ' + shredded + '.';
+  $('startBtn').textContent = 'Play Again';
+}
+function updateHud() {
+  $('score').textContent = 'Score: ' + score + ' / ' + WIN;
+  $('lives').textContent = 'Lives: ' + '♥'.repeat(Math.max(0, lives));
+  $('time').textContent = 'Time: ' + Math.ceil(Math.max(0, timeLeft));
+  $('time').className = timeLeft <= 10 ? 'low' : '';
+}
 
-  // ---------- Spawning ----------
-  function spawnObject() {
-    const isCoffee = Math.random() < 0.55;
-    const size = isCoffee ? 30 : 34;
-    objects.push({
-      type: isCoffee ? 'coffee' : 'paper',
-      x: size / 2 + Math.random() * (W - size),
-      y: -size,
-      w: size,
-      h: isCoffee ? 34 : 40,
-      speed: 70 + Math.random() * 90, // gentle, varied speeds
-      wobble: Math.random() * Math.PI * 2
-    });
+function shoot() {
+  shotT = 0.1; recoil = 1; shake = Math.max(shake, 0.25); cd = 0.28;
+  let best = null, bz = 1e9;
+  for (const p of papers) {
+    const c = cam(p.x, p.y, p.z);
+    if (c.z < NEAR) continue;
+    const q = scr(c), rad = 0.75 * F / c.z;
+    if (Math.hypot(q[0] - W / 2, q[1] - H / 2) < rad && c.z < bz) { bz = c.z; best = p; }
   }
-
-  // ---------- Collision ----------
-  function hits(a, b) {
-    // Both use centre x; goblin y is its feet, object y is its centre
-    const gLeft = a.x - a.w / 2, gRight = a.x + a.w / 2;
-    const gTop = a.y - a.h, gBottom = a.y;
-    const oLeft = b.x - b.w / 2, oRight = b.x + b.w / 2;
-    const oTop = b.y - b.h / 2, oBottom = b.y + b.h / 2;
-    return gLeft < oRight && gRight > oLeft && gTop < oBottom && gBottom > oTop;
+  if (best) {
+    papers.splice(papers.indexOf(best), 1);
+    shredded++; shake = 0.45;
+    burst(best.x, best.y, best.z, 34, ['#ffffff', '#f2f2ff', '#ffe27a', '#ff7a6a', '#8fd0ff'], 4, 6, 1.1, 0.1);
+    addText(best.x, best.y + 0.6, best.z, 'SHREDDED!', '#ffe27a');
   }
+}
+function spawnPaper() {
+  const a = rnd(0, 6.283), r = rnd(16, 19);
+  let x = clamp(Math.cos(a) * r, -18.5, 18.5), z = clamp(Math.sin(a) * r, -18.5, 18.5);
+  if (Math.hypot(x - P.x, z - P.z) < 9) { x = -P.x; z = -P.z; x = clamp(x * 1.2 + 6, -18.5, 18.5); z = clamp(z - 14, -18.5, 18.5); }
+  papers.push({ x, z, y: rnd(1.0, 2.0), by: rnd(1.0, 2.0), ph: rnd(0, 6.28), sp: 0 });
+}
 
-  function addMessage(text, color, x, y) {
-    messages.push({ text: text, color: color, x: x, y: y, life: 0.9 });
+function update(dt) {
+  // always-decaying effects
+  shotT = Math.max(0, shotT - dt); recoil = Math.max(0, recoil - dt * 6); shake = Math.max(0, shake - dt * 2.2); flash = Math.max(0, flash - dt * 1.8);
+  cd = Math.max(0, cd - dt);
+  if (state === 'ready') {
+    P.yaw += dt * 0.15;
+    moveFriends(dt);
+    return;
   }
+  if (state !== 'play') return;
+  elapsed += dt; timeLeft -= dt;
+  if (timeLeft <= 0) { timeLeft = 0; updateHud(); end('lost'); return; }
 
-  function endGame(result, reason) {
-    state = result;
-    endReason = reason;
-    keys.left = keys.right = false;
-  }
+  const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+  const s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  const t = (keys.ArrowRight || keys.KeyE ? 1 : 0) - (keys.ArrowLeft || keys.KeyQ ? 1 : 0);
+  P.yaw += t * 2.4 * dt;
+  const sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
+  let mx = sy * f + cy * s, mz = cy * f - sy * s;
+  const ml = Math.hypot(mx, mz);
+  if (ml > 0) { mx /= ml; mz /= ml; P.x += mx * 6.2 * dt; P.z += mz * 6.2 * dt; hitPillars(P, 0.4); }
+  moveAmt += ((ml > 0 ? 1 : 0) - moveAmt) * Math.min(1, dt * 10);
+  if (ml > 0) bobT += dt * 10;
 
-  // ---------- Update ----------
-  function update(dt) {
-    // Fade feedback messages even after game over
-    for (let i = messages.length - 1; i >= 0; i--) {
-      messages[i].life -= dt;
-      messages[i].y -= 40 * dt;
-      if (messages[i].life <= 0) messages.splice(i, 1);
-    }
+  if ((keys.Space || mouseHeld) && cd <= 0) shoot();
 
-    if (state !== 'playing') return; // no movement/spawning outside play
-
-    // Timer
-    timeLeft -= dt;
-    if (timeLeft <= 0) {
-      timeLeft = 0;
-      updateHUD();
-      endGame('lost', "Time's up!");
-      return;
-    }
-
-    // Goblin movement
-    if (keys.left) goblin.x -= goblin.speed * dt;
-    if (keys.right) goblin.x += goblin.speed * dt;
-    goblin.x = Math.max(goblin.w / 2, Math.min(W - goblin.w / 2, goblin.x));
-
-    // Spawn
-    spawnTimer -= dt;
-    if (spawnTimer <= 0) {
-      spawnObject();
-      spawnTimer = SPAWN_INTERVAL;
-    }
-
-    // Move objects + collisions
-    for (let i = objects.length - 1; i >= 0; i--) {
-      const o = objects[i];
-      o.y += o.speed * dt;
-      o.wobble += dt * 3;
-
-      if (hits(goblin, o)) {
-        objects.splice(i, 1); // removed immediately, so it can only count once
-        if (o.type === 'coffee') {
-          score += 1;
-          addMessage('+1 Coffee!', '#2e7d32', o.x, o.y);
-        } else {
-          lives -= 1;
-          addMessage('-1 Life! Assignment!', '#c62828', o.x, o.y);
-        }
-        updateHUD();
-        if (score >= WIN_SCORE) { endGame('won', 'You collected ' + WIN_SCORE + ' coffees!'); return; }
-        if (lives <= 0) { endGame('lost', 'Out of lives!'); return; }
-        continue;
-      }
-
-      if (o.y - o.h / 2 > H) objects.splice(i, 1); // off screen
-    }
-
-    updateHUD();
-  }
-
-  // ---------- Drawing ----------
-  function drawBackground() {
-    ctx.fillStyle = '#87c8ee';
-    ctx.fillRect(0, 0, W, H);
-    // Sun
-    ctx.fillStyle = '#ffe066';
-    ctx.beginPath(); ctx.arc(700, 70, 40, 0, Math.PI * 2); ctx.fill();
-    // Hills
-    ctx.fillStyle = '#7cc47a';
-    ctx.beginPath(); ctx.ellipse(200, GROUND + 20, 260, 80, 0, Math.PI, 0); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(620, GROUND + 20, 300, 100, 0, Math.PI, 0); ctx.fill();
-    // Ground
-    ctx.fillStyle = '#5a9e4b';
-    ctx.fillRect(0, GROUND, W, H - GROUND);
-  }
-
-  function drawGoblin(x, y) {
-    ctx.save();
-    ctx.translate(x, y);
-    // Legs
-    ctx.fillStyle = '#3e6b2a';
-    ctx.fillRect(-14, -16, 10, 16);
-    ctx.fillRect(4, -16, 10, 16);
-    // Body (tunic)
-    ctx.fillStyle = '#8b5a2b';
-    ctx.fillRect(-18, -40, 36, 26);
-    // Arms
-    ctx.fillStyle = '#5fa83f';
-    ctx.fillRect(-26, -38, 8, 18);
-    ctx.fillRect(18, -38, 8, 18);
-    // Head
-    ctx.fillStyle = '#6fbf45';
-    ctx.beginPath(); ctx.arc(0, -52, 16, 0, Math.PI * 2); ctx.fill();
-    // Ears
-    ctx.beginPath();
-    ctx.moveTo(-14, -56); ctx.lineTo(-32, -66); ctx.lineTo(-12, -46); ctx.closePath(); ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(14, -56); ctx.lineTo(32, -66); ctx.lineTo(12, -46); ctx.closePath(); ctx.fill();
-    // Eyes
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(-6, -55, 4, 0, Math.PI * 2); ctx.arc(6, -55, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.arc(-6, -55, 2, 0, Math.PI * 2); ctx.arc(6, -55, 2, 0, Math.PI * 2); ctx.fill();
-    // Grin
-    ctx.strokeStyle = '#2d4a1c'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0, -47, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawCoffee(o) {
-    ctx.save();
-    ctx.translate(o.x, o.y);
-    // Steam
-    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-4, -18); ctx.quadraticCurveTo(-8 + Math.sin(o.wobble) * 3, -24, -4, -30);
-    ctx.moveTo(5, -18); ctx.quadraticCurveTo(1 + Math.sin(o.wobble + 1) * 3, -24, 5, -30);
-    ctx.stroke();
-    // Cup
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(-12, -14, 24, 28);
-    ctx.fillStyle = '#6f4e37';
-    ctx.fillRect(-12, -14, 24, 6);
-    // Sleeve
-    ctx.fillStyle = '#c8a27a';
-    ctx.fillRect(-12, -2, 24, 9);
-    // Handle
-    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(14, 0, 6, -Math.PI / 2, Math.PI / 2); ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawPaper(o) {
-    ctx.save();
-    ctx.translate(o.x, o.y);
-    ctx.rotate(Math.sin(o.wobble) * 0.25);
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
-    ctx.fillRect(-17, -20, 34, 40);
-    ctx.strokeRect(-17, -20, 34, 40);
-    // Lines
-    ctx.strokeStyle = '#90a4c8';
-    for (let ly = -10; ly <= 14; ly += 6) {
-      ctx.beginPath(); ctx.moveTo(-12, ly); ctx.lineTo(12, ly); ctx.stroke();
-    }
-    // Red "F"
-    ctx.fillStyle = '#d32f2f';
-    ctx.font = 'bold 14px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('F', 9, -8);
-    ctx.restore();
-  }
-
-  function drawMessages() {
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 20px Arial';
-    messages.forEach(function (m) {
-      ctx.globalAlpha = Math.max(0, Math.min(1, m.life / 0.9));
-      ctx.fillStyle = m.color;
-      ctx.fillText(m.text, m.x, Math.max(24, m.y));
-    });
-    ctx.globalAlpha = 1;
-  }
-
-  function drawOverlay(title, lines) {
-    ctx.fillStyle = 'rgba(20, 25, 35, 0.72)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 44px Arial';
-    ctx.fillText(title, W / 2, H / 2 - 50);
-    ctx.font = '20px Arial';
-    lines.forEach(function (line, i) {
-      ctx.fillText(line, W / 2, H / 2 + i * 30);
-    });
-  }
-
-  function draw() {
-    drawBackground();
-    objects.forEach(function (o) { o.type === 'coffee' ? drawCoffee(o) : drawPaper(o); });
-    drawGoblin(goblin.x, goblin.y);
-    drawMessages();
-
-    if (state === 'start') {
-      drawOverlay('Goblin Coffee Run', [
-        'Catch 8 coffees in 45 seconds. Avoid the assignment papers!',
-        'Move with ← → or A / D. You have 3 lives.',
-        'Press Start (or R) to play.'
-      ]);
-    } else if (state === 'won') {
-      drawOverlay('You Win!', [endReason, 'Final score: ' + score, 'Press R or Restart to play again.']);
-    } else if (state === 'lost') {
-      drawOverlay('Game Over', [endReason, 'Final score: ' + score, 'Press R or Restart to try again.']);
+  for (let i = coffees.length - 1; i >= 0; i--) {
+    const c = coffees[i];
+    if (Math.hypot(c.x - P.x, c.z - P.z) < 0.95) {
+      coffees.splice(i, 1); score++;
+      burst(c.x, 0.7, c.z, 20, ['#ffffff', '#e9dcc8', '#c68a4a', '#ffd88a'], 2.2, -1, 0.9, 0.09);
+      addText(c.x, 1.3, c.z, '+1 COFFEE', '#9dff8a');
+      const sp = freeSpot(5); coffees.push({ x: sp.x, z: sp.z, ph: rnd(0, 6) });
+      updateHud();
+      if (score >= WIN) { end('won'); return; }
+    } else if (Math.random() < dt * 5) {
+      parts.push({ x: c.x + rnd(-0.08, 0.08), y: 0.95, z: c.z + rnd(-0.08, 0.08), vx: rnd(-.1, .1), vy: 0.7, vz: rnd(-.1, .1), g: -0.2, life: 1, max: 1, size: 0.1, col: '#ffffff' });
     }
   }
 
-  // ---------- Loop ----------
-  let last = performance.now();
-  function loop(now) {
-    const dt = Math.min(0.05, (now - last) / 1000); // cap so tab switching doesn't jump
-    last = now;
-    update(dt);
-    draw();
-    requestAnimationFrame(loop);
+  const spd = 3.2 + (elapsed / GAME_TIME) * 1.8;
+  for (let i = papers.length - 1; i >= 0; i--) {
+    const p = papers[i];
+    const dx = P.x - p.x, dz = P.z - p.z, d = Math.hypot(dx, dz) || 1;
+    const sw = Math.sin(now * 2 + p.ph) * 0.9;
+    p.x += (dx / d * spd - dz / d * sw) * dt; p.z += (dz / d * spd + dx / d * sw) * dt;
+    p.y = p.by + Math.sin(now * 3 + p.ph) * 0.25;
+    if (d < 0.85) {
+      papers.splice(i, 1); lives--; flash = 1; shake = 0.7;
+      burst(p.x, p.y, p.z, 20, ['#ffffff', '#ff6a5a'], 3, 6, 0.8, 0.1);
+      addText(P.x + Math.sin(P.yaw) * 2, 1.6, P.z + Math.cos(P.yaw) * 2, '-1 LIFE', '#ff6a5a');
+      updateHud();
+      if (lives <= 0) { end('lost'); return; }
+    }
   }
+  spawnT -= dt;
+  if (spawnT <= 0) { if (papers.length < 6) spawnPaper(); spawnT = Math.max(0.85, 1.9 - elapsed * 0.025); }
 
-  resetGame();
+  moveFriends(dt);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    p.vy -= p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    if (p.y < 0.03 && p.g > 0) { p.y = 0.03; p.vy = 0; p.vx *= 0.9; p.vz *= 0.9; }
+  }
+  for (let i = texts.length - 1; i >= 0; i--) { const t2 = texts[i]; t2.life -= dt; t2.y += dt * 0.8; if (t2.life <= 0) texts.splice(i, 1); }
+  updateHud();
+}
+function moveFriends(dt) {
+  for (const f of friends) {
+    const dx = f.tx - f.x, dz = f.tz - f.z, d = Math.hypot(dx, dz);
+    if (d < 0.5) { const s = freeSpot(0); f.tx = s.x; f.tz = s.z; }
+    else { f.x += dx / d * 1.6 * dt; f.z += dz / d * 1.6 * dt; f.ph += dt * 9; hitPillars(f, 0.4); }
+    f.nextSay -= dt; f.sayT -= dt;
+    if (f.nextSay <= 0) { f.say = SAYS[(Math.random() * SAYS.length) | 0]; f.sayT = 2.6; f.nextSay = rnd(5, 9); }
+  }
+}
+
+// ---------- rendering: world ----------
+function drawSky() {
+  const g = ctx.createLinearGradient(0, hor - 340, 0, hor);
+  g.addColorStop(0, '#2a2468'); g.addColorStop(0.55, '#b0589c'); g.addColorStop(1, '#ffc08a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, Math.max(0, hor) + 1);
+  const wrap = a => { while (a > Math.PI) a -= 6.283; while (a < -Math.PI) a += 6.283; return a; };
+  // blocky sun
+  let d = wrap(0.7 - P.yaw);
+  if (Math.abs(d) < 1.3) {
+    const sx = W / 2 + Math.tan(d) * F, sy = hor - 0.42 * F;
+    ctx.fillStyle = 'rgba(255,220,150,.25)'; ctx.fillRect(sx - 70, sy - 70, 140, 140);
+    ctx.fillStyle = '#fff1b0'; ctx.fillRect(sx - 36, sy - 36, 72, 72);
+  }
+  ctx.fillStyle = 'rgba(255,235,230,.55)';
+  for (const c of CLOUDS) {
+    d = wrap(c.az + now * 0.01 - P.yaw);
+    if (Math.abs(d) > 1.3) continue;
+    const sx = W / 2 + Math.tan(d) * F, sy = hor - c.el * F;
+    ctx.fillRect(sx - c.w / 2, sy, c.w, 16); ctx.fillRect(sx - c.w / 3, sy - 12, c.w * 0.6, 14); ctx.fillRect(sx - c.w * 0.7, sy + 10, c.w * 0.5, 10);
+  }
+}
+function drawFloor() {
+  const g = ctx.createLinearGradient(0, hor, 0, hor + 260);
+  g.addColorStop(0, 'rgb(' + FOG.join(',') + ')'); g.addColorStop(0.35, '#4f9a84'); g.addColorStop(1, '#2f6f5e');
+  ctx.fillStyle = g; ctx.fillRect(0, hor, W, H - hor + 2);
+  for (let ix = -10; ix < 10; ix++) for (let iz = -10; iz < 10; iz++) {
+    if ((ix + iz) & 1) continue;
+    const cx = ix * 2 + 1, cz = iz * 2 + 1, c = cam(cx, 0, cz);
+    if (c.z < -3) continue;
+    const dist = Math.hypot(cx - P.x, cz - P.z); if (dist > 34) continue;
+    const a = 0.2 * (1 - fogT(dist));
+    poly([cam(ix * 2, 0, iz * 2), cam(ix * 2 + 2, 0, iz * 2), cam(ix * 2 + 2, 0, iz * 2 + 2), cam(ix * 2, 0, iz * 2 + 2)], 'rgba(15,10,50,' + a.toFixed(3) + ')');
+  }
+}
+function drawWalls() {
+  const A = ARENA, walls = [[-A, -A, A, -A], [A, -A, A, A], [A, A, -A, A], [-A, A, -A, -A]];
+  const base = [88, 76, 140];
+  for (const w of walls) for (let i = 0; i < 10; i++) {
+    const t0 = i / 10, t1 = (i + 1) / 10;
+    const x1 = w[0] + (w[2] - w[0]) * t0, z1 = w[1] + (w[3] - w[1]) * t0, x2 = w[0] + (w[2] - w[0]) * t1, z2 = w[1] + (w[3] - w[1]) * t1;
+    const d = Math.hypot((x1 + x2) / 2 - P.x, (z1 + z2) / 2 - P.z);
+    for (let j = 0; j < 2; j++) quadXZ(x1, z1, x2, z2, j * 2.4, j * 2.4 + 2.4, fogCol(base, d, ((i + j) & 1) ? 0.78 : 1), 'rgba(0,0,0,.25)');
+    quadXZ(x1, z1, x2, z2, 4.8, 5.1, fogCol([90, 240, 220], d, 1));
+  }
+}
+function drawPillar(p) {
+  const d = Math.hypot(p.x - P.x, p.z - P.z), hw = p.hw;
+  const faces = [[-hw, -hw, hw, -hw, 0, -1, .92], [hw, -hw, hw, hw, 1, 0, .72], [hw, hw, -hw, hw, 0, 1, .6], [-hw, hw, -hw, -hw, -1, 0, .8]];
+  for (const f of faces) {
+    const cx = p.x + (f[0] + f[2]) / 2, cz = p.z + (f[1] + f[3]) / 2;
+    if ((P.x - cx) * f[4] + (P.z - cz) * f[5] <= 0) continue;
+    for (let j = 0; j < p.h; j++) {
+      const sh = f[6] * (j & 1 ? 0.88 : 1);
+      quadXZ(p.x + f[0], p.z + f[1], p.x + f[2], p.z + f[3], j, j + 1, fogCol(p.col, d, sh), 'rgba(0,0,0,.3)');
+    }
+  }
+  if (CAMY < p.h) { /* top not visible */ } else {
+    poly([cam(p.x - hw, p.h, p.z - hw), cam(p.x + hw, p.h, p.z - hw), cam(p.x + hw, p.h, p.z + hw), cam(p.x - hw, p.h, p.z + hw)], fogCol(p.col, d, 1.15), 'rgba(0,0,0,.3)');
+  }
+}
+function shadow(x, z, r, a) {
+  const c = cam(x, 0, z); if (c.z < NEAR) return;
+  const q = scr(c), s = F / c.z;
+  ctx.fillStyle = 'rgba(0,0,0,' + a + ')';
+  ctx.beginPath(); ctx.ellipse(q[0], q[1], r * s, r * s * 0.28, 0, 0, 6.283); ctx.fill();
+}
+function drawCoffee(o) {
+  const y = 0.6 + Math.sin(now * 3 + o.ph) * 0.12, c = cam(o.x, y, o.z); if (c.z < NEAR) return;
+  const q = scr(c), s = F / c.z, d = c.z, t = fogT(d);
+  shadow(o.x, o.z, 0.35, 0.3 * (1 - t));
+  ctx.globalAlpha = 1 - t * 0.7;
+  const g = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], 0.9 * s);
+  g.addColorStop(0, 'rgba(255,220,120,.6)'); g.addColorStop(1, 'rgba(255,200,80,0)');
+  ctx.fillStyle = g; ctx.fillRect(q[0] - s, q[1] - s, 2 * s, 2 * s);
+  const x = q[0], by = q[1] + 0.25 * s;
+  ctx.fillStyle = '#b5703a';
+  ctx.beginPath(); ctx.moveTo(x - 0.2 * s, by - 0.5 * s); ctx.lineTo(x + 0.2 * s, by - 0.5 * s); ctx.lineTo(x + 0.14 * s, by); ctx.lineTo(x - 0.14 * s, by); ctx.fill();
+  ctx.fillStyle = '#f4ead8'; ctx.fillRect(x - 0.2 * s, by - 0.34 * s, 0.4 * s - 0.06 * s, 0.14 * s);
+  ctx.fillStyle = '#fff'; ctx.fillRect(x - 0.23 * s, by - 0.58 * s, 0.46 * s, 0.09 * s);
+  ctx.fillStyle = '#6a3b1a'; ctx.fillRect(x - 0.15 * s, by - 0.5 * s, 0.3 * s, 0.03 * s);
+  ctx.strokeStyle = '#b5703a'; ctx.lineWidth = Math.max(1, 0.05 * s);
+  ctx.beginPath(); ctx.arc(x + 0.19 * s, by - 0.26 * s, 0.1 * s, -1.5, 1.5); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+function drawPaper(o) {
+  const c = cam(o.x, o.y, o.z); if (c.z < NEAR) return;
+  const q = scr(c), s = F / c.z, t = fogT(c.z);
+  shadow(o.x, o.z, 0.4, 0.22 * (1 - t));
+  ctx.save(); ctx.translate(q[0], q[1]); ctx.rotate(Math.sin(now * 3 + o.ph) * 0.3);
+  ctx.globalAlpha = 1 - t * 0.7;
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1.1 * s);
+  g.addColorStop(0, 'rgba(255,60,50,.35)'); g.addColorStop(1, 'rgba(255,60,50,0)');
+  ctx.fillStyle = g; ctx.fillRect(-1.1 * s, -1.1 * s, 2.2 * s, 2.2 * s);
+  const w = 0.8 * s, h = 1.05 * s;
+  ctx.fillStyle = '#fbfbff'; ctx.fillRect(-w / 2, -h / 2, w, h);
+  ctx.strokeStyle = '#444'; ctx.lineWidth = Math.max(1, 0.03 * s); ctx.strokeRect(-w / 2, -h / 2, w, h);
+  ctx.fillStyle = '#c8cde0';
+  for (let i = 0; i < 4; i++) ctx.fillRect(-w * 0.38, h * (0.0 + i * 0.12), w * 0.76, Math.max(1, 0.025 * s));
+  ctx.fillStyle = '#d62f2f'; ctx.font = 'bold ' + Math.max(6, 0.3 * s | 0) + 'px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('F-', 0, -h * 0.22);
+  ctx.fillStyle = '#222'; ctx.fillRect(-w * 0.28, -h * 0.02, w * 0.16, w * 0.12); ctx.fillRect(w * 0.12, -h * 0.02, w * 0.16, w * 0.12);
+  ctx.fillStyle = '#d62f2f'; ctx.fillRect(-w * 0.34, -h * 0.07, w * 0.28, w * 0.04); ctx.fillRect(w * 0.06, -h * 0.07, w * 0.28, w * 0.04);
+  ctx.restore();
+}
+function drawFriend(f) {
+  const c = cam(f.x, 0, f.z); if (c.z < NEAR) return;
+  const q = scr(c), s = F / c.z, t = fogT(c.z), cx = q[0], gy = q[1] - Math.abs(Math.sin(f.ph)) * 0.05 * s;
+  shadow(f.x, f.z, 0.4, 0.3 * (1 - t));
+  const col = (a, sh) => fogCol(a, c.z, sh);
+  const R = (x0, x1, y0, y1, fill) => { ctx.fillStyle = fill; ctx.fillRect(cx + x0 * s, gy - y1 * s, (x1 - x0) * s, (y1 - y0) * s); };
+  const sw = Math.sin(f.ph) * 0.08;
+  R(-0.2, -0.04, 0, 0.45 + sw, col([50, 40, 70])); R(0.04, 0.2, 0, 0.45 - sw, col([50, 40, 70]));
+  R(-0.26, 0.26, 0.45, 0.95, col(f.d.tun)); R(-0.26, 0.26, 0.45, 0.52, col([60, 40, 30]));
+  R(-0.38, -0.26, 0.5 + sw, 0.9, col(f.d.skin, 0.9)); R(0.26, 0.38, 0.5 - sw, 0.9, col(f.d.skin, 0.9));
+  R(-0.25, 0.25, 0.95, 1.4, col(f.d.skin));
+  ctx.fillStyle = col(f.d.skin, 0.85);
+  ctx.beginPath(); ctx.moveTo(cx - 0.25 * s, gy - 1.25 * s); ctx.lineTo(cx - 0.62 * s, gy - 1.42 * s); ctx.lineTo(cx - 0.25 * s, gy - 1.05 * s); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx + 0.25 * s, gy - 1.25 * s); ctx.lineTo(cx + 0.62 * s, gy - 1.42 * s); ctx.lineTo(cx + 0.25 * s, gy - 1.05 * s); ctx.fill();
+  R(-0.16, -0.04, 1.14, 1.26, col([255, 230, 90])); R(0.04, 0.16, 1.14, 1.26, col([255, 230, 90]));
+  R(-0.1, -0.06, 1.17, 1.23, '#222'); R(0.06, 0.1, 1.17, 1.23, '#222');
+  R(-0.1, 0.1, 1.0, 1.05, col([40, 60, 30])); R(-0.05, 0.05, 1.1, 1.15, col(f.d.skin, 0.7));
+  if (f.sayT > 0 && c.z < 24) {
+    ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+    const tw = ctx.measureText(f.say).width + 16, bx = cx, by = gy - 1.55 * s - 14;
+    ctx.fillStyle = '#fff'; ctx.fillRect(bx - tw / 2, by - 12, tw, 24);
+    ctx.beginPath(); ctx.moveTo(bx - 6, by + 12); ctx.lineTo(bx + 6, by + 12); ctx.lineTo(bx, by + 20); ctx.fill();
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.strokeRect(bx - tw / 2, by - 12, tw, 24);
+    ctx.fillStyle = '#222'; ctx.fillText(f.say, bx, by + 5);
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    const c = cam(p.x, p.y, p.z); if (c.z < NEAR) continue;
+    const q = scr(c), sz = Math.max(1.5, p.size * F / c.z);
+    ctx.globalAlpha = clamp(p.life / p.max, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(q[0] - sz / 2, q[1] - sz / 2, sz, sz * 0.7);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+  for (const t of texts) {
+    const c = cam(t.x, t.y, t.z); if (c.z < NEAR) continue;
+    const q = scr(c); ctx.globalAlpha = clamp(t.life * 1.5, 0, 1);
+    ctx.font = 'bold 24px Arial'; ctx.lineWidth = 5; ctx.strokeStyle = '#1a1030'; ctx.strokeText(t.str, q[0], q[1]);
+    ctx.fillStyle = t.col; ctx.fillText(t.str, q[0], q[1]);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- rendering: HUD layers ----------
+function drawGun() {
+  const bx = Math.sin(bobT) * 8 * moveAmt, by = Math.abs(Math.cos(bobT)) * 8 * moveAmt + recoil * 26;
+  ctx.save(); ctx.translate(bx, by);
+  const poly2 = (pts, fill) => { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = '#161226'; ctx.lineWidth = 2; ctx.stroke(); };
+  // coffee tank
+  poly2([[560, 400], [650, 400], [660, 500], [545, 500]], '#8a4f26');
+  ctx.fillStyle = '#c98a4e'; ctx.fillRect(566, 412, 12, 88);
+  ctx.fillStyle = '#f4ead8'; ctx.fillRect(552, 440, 100, 20);
+  poly2([[552, 392], [658, 392], [650, 404], [560, 404]], '#ffffff');
+  // barrel and body
+  poly2([[412, 316], [458, 316], [655, 500], [470, 500]], '#4a5361');
+  poly2([[412, 316], [458, 316], [520, 404], [470, 404]], '#8a97ab');
+  poly2([[458, 316], [458, 332], [560, 430], [520, 404]], '#363d49');
+  ctx.fillStyle = '#ff9a3c'; ctx.fillRect(408, 308, 54, 12); ctx.strokeStyle = '#161226'; ctx.strokeRect(408, 308, 54, 12);
+  ctx.fillStyle = '#1b1b24'; ctx.fillRect(425, 309, 22, 6);
+  // goblin hand
+  ctx.fillStyle = '#5db84a'; ctx.strokeStyle = '#1d4a18'; ctx.lineWidth = 3;
+  for (let i = 0; i < 4; i++) { ctx.fillRect(500 + i * 26, 408 + (i === 0 || i === 3 ? 8 : 0), 24, 56); ctx.strokeRect(500 + i * 26, 408 + (i === 0 || i === 3 ? 8 : 0), 24, 56); }
+  ctx.fillStyle = '#6fd05a'; ctx.fillRect(488, 450, 150, 60); ctx.strokeRect(488, 450, 150, 60);
+  ctx.fillStyle = '#6fd05a'; ctx.fillRect(630, 470, 190, 60); ctx.strokeRect(630, 470, 190, 60);
+  ctx.fillStyle = '#2f7a25'; ctx.fillRect(520, 456, 10, 10); ctx.fillRect(560, 462, 8, 8);
+  if (shotT > 0) {
+    const a = shotT / 0.1, cx = 435, cy = 308;
+    ctx.globalAlpha = a; ctx.fillStyle = '#ffb347'; ctx.beginPath();
+    for (let i = 0; i < 16; i++) { const r = i % 2 ? 20 : 54, an = i * Math.PI / 8; ctx.lineTo(cx + Math.cos(an) * r, cy + Math.sin(an) * r); }
+    ctx.fill(); ctx.fillStyle = '#fff6c0'; ctx.fillRect(cx - 14, cy - 14, 28, 28); ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  if (shotT > 0) {
+    ctx.strokeStyle = 'rgba(255,215,140,' + (shotT / 0.1) + ')'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(435 + bx, 310 + by); ctx.lineTo(W / 2, H / 2); ctx.stroke();
+  }
+}
+function drawMinimap() {
+  const x0 = W - 104, y0 = 10, sz = 94, sc = sz / (2 * ARENA), cx = x0 + sz / 2, cy = y0 + sz / 2;
+  ctx.fillStyle = 'rgba(10,8,30,.6)'; ctx.fillRect(x0, y0, sz, sz); ctx.strokeStyle = '#9d8cff'; ctx.lineWidth = 1; ctx.strokeRect(x0, y0, sz, sz);
+  ctx.fillStyle = '#6a6a90'; for (const p of PILLARS) ctx.fillRect(cx + (p.x - p.hw) * sc, cy - (p.z + p.hw) * sc, p.hw * 2 * sc, p.hw * 2 * sc);
+  const dot = (o, col, r) => { ctx.fillStyle = col; ctx.fillRect(cx + o.x * sc - r, cy - o.z * sc - r, r * 2, r * 2); };
+  coffees.forEach(o => dot(o, '#d89a5a', 2)); papers.forEach(o => dot(o, '#ff5a4a', 2)); friends.forEach(o => dot(o, '#6fd05a', 2));
+  const px = cx + P.x * sc, py = cy - P.z * sc, sy = Math.sin(P.yaw), cyw = Math.cos(P.yaw);
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(px + sy * 6, py - cyw * 6); ctx.lineTo(px - cyw * 3.5 - sy * 3, py - sy * 3.5 + cyw * 3); ctx.lineTo(px + cyw * 3.5 - sy * 3, py + sy * 3.5 + cyw * 3); ctx.fill();
+}
+const vig = document.createElement('canvas'); vig.width = W; vig.height = H;
+(function () {
+  const v = vig.getContext('2d'), g = v.createRadialGradient(W / 2, H / 2, 160, W / 2, H / 2, 480);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(10,0,30,.6)'); v.fillStyle = g; v.fillRect(0, 0, W, H);
+})();
+
+function render() {
+  S = Math.sin(P.yaw); Cc = Math.cos(P.yaw);
+  hor = H / 2 + P.pitch;
+  CAMY = 1.6 + Math.sin(bobT * 2) * 0.045 * moveAmt;
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() - .5) * shake * 16, (Math.random() - .5) * shake * 16);
+  ctx.fillStyle = '#000'; ctx.fillRect(-20, -20, W + 40, H + 40);
+  drawSky(); drawFloor(); drawWalls();
+  const items = [];
+  const dd = (x, z) => (x - P.x) * (x - P.x) + (z - P.z) * (z - P.z);
+  for (const p of PILLARS) items.push({ d: dd(p.x, p.z), f: () => drawPillar(p) });
+  for (const o of coffees) items.push({ d: dd(o.x, o.z), f: () => drawCoffee(o) });
+  for (const o of papers) items.push({ d: dd(o.x, o.z), f: () => drawPaper(o) });
+  for (const o of friends) items.push({ d: dd(o.x, o.z), f: () => drawFriend(o) });
+  items.sort((a, b) => b.d - a.d);
+  for (const it of items) it.f();
+  drawParts();
+  drawGun();
+  ctx.restore();
+  ctx.drawImage(vig, 0, 0);
+  if (flash > 0) {
+    ctx.fillStyle = 'rgba(255,20,20,' + (flash * 0.4).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(W / 2, H / 2, 150, W / 2, H / 2, 470); g.addColorStop(0, 'rgba(255,0,0,0)'); g.addColorStop(1, 'rgba(255,0,0,' + (flash * 0.7).toFixed(3) + ')');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  if (state === 'play') {
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(W / 2 - 14, H / 2); ctx.lineTo(W / 2 - 5, H / 2); ctx.moveTo(W / 2 + 5, H / 2); ctx.lineTo(W / 2 + 14, H / 2);
+    ctx.moveTo(W / 2, H / 2 - 14); ctx.lineTo(W / 2, H / 2 - 5); ctx.moveTo(W / 2, H / 2 + 5); ctx.lineTo(W / 2, H / 2 + 14); ctx.stroke();
+  }
+  drawMinimap();
+}
+
+// ---------- input & loop ----------
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyR') { reset(true); e.preventDefault(); return; }
+  if (e.code === 'Enter' && state === 'ready') { reset(true); return; }
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].indexOf(e.code) >= 0) e.preventDefault();
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseHeld = false; });
+cv.addEventListener('mousedown', e => {
+  if (state !== 'play') return;
+  if (document.pointerLockElement === cv) mouseHeld = true;
+  else { try { const r = cv.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) {} }
+});
+window.addEventListener('mouseup', () => { mouseHeld = false; });
+document.addEventListener('mousemove', e => {
+  if (state === 'play' && document.pointerLockElement === cv) {
+    P.yaw += e.movementX * 0.0025; P.pitch = clamp(P.pitch - e.movementY * 0.9, -140, 140);
+  }
+});
+$('startBtn').addEventListener('click', () => reset(true));
+$('restart').addEventListener('click', () => reset(true));
+
+let last = 0;
+function loop(t) {
+  const dt = Math.min(0.033, last ? (t - last) / 1000 : 0.016); last = t;
+  if (state === 'play') now += dt; else now += dt * 0.3;
+  update(dt); render();
   requestAnimationFrame(loop);
+}
+reset(false);
+render();
+requestAnimationFrame(loop);
+window.__game = { get state() { return state; }, get score() { return score; }, get lives() { return lives; }, get time() { return timeLeft; }, get papers() { return papers.length; } };
 })();
 </script>
 </body>
