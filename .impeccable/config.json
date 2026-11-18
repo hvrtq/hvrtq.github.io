@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "arial",
+        "createdAt": "2026-11-18T03:20:05.716Z",
+        "reason": "assignment brief forbids external assets, so a system font (Arial) is required"
+      }
+    ]
+  }
+}
