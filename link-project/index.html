@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Goblin Coffee Run</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #1d2330;
+    color: #f2f2f2;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  h1 { margin: 0 0 12px; font-size: 26px; }
+  #hud {
+    width: 800px;
+    max-width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: #2b3346;
+    border-radius: 8px 8px 0 0;
+    font-size: 18px;
+    font-weight: bold;
+  }
+  #hud span { min-width: 110px; }
+  #startBtn {
+    padding: 6px 16px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 6px;
+    background: #2e7d32;
+    color: #fff;
+    cursor: pointer;
+  }
+  #startBtn:hover { background: #1b5e20; }
+  canvas {
+    display: block;
+    width: 800px;
+    max-width: 100%;
+    background: #87c8ee;
+    border-radius: 0 0 8px 8px;
+  }
+  p.help { margin-top: 10px; color: #b8c0d0; font-size: 14px; }
+</style>
+</head>
+<body>
+  <h1>Goblin Coffee Run</h1>
+  <div id="hud">
+    <span id="score">Score: 0</span>
+    <span id="lives">Lives: 3</span>
+    <span id="timer">Time: 45</span>
+    <button id="startBtn">Start</button>
+  </div>
+  <canvas id="game" width="800" height="500"></canvas>
+  <p class="help">Move: ← → or A / D &nbsp;|&nbsp; Restart: R or the button &nbsp;|&nbsp; Catch 8 coffees, dodge assignments!</p>
+
+<script>
+(function () {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const GROUND = H - 40;
+
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const timerEl = document.getElementById('timer');
+  const startBtn = document.getElementById('startBtn');
+
+  // Game settings
+  const START_LIVES = 3;
+  const TIME_LIMIT = 45;     // seconds
+  const WIN_SCORE = 8;       // coffees needed to win
+  const SPAWN_INTERVAL = 0.8; // seconds between spawns
+
+  // State: 'start' | 'playing' | 'won' | 'lost'
+  let state = 'start';
+  let score, lives, timeLeft, objects, spawnTimer, messages, endReason;
+
+  const goblin = { x: W / 2, y: GROUND, w: 50, h: 60, speed: 320 };
+  const keys = { left: false, right: false };
+
+  function resetGame() {
+    score = 0;
+    lives = START_LIVES;
+    timeLeft = TIME_LIMIT;
+    objects = [];
+    messages = [];
+    spawnTimer = 0;
+    endReason = '';
+    goblin.x = W / 2;
+    keys.left = keys.right = false;
+    updateHUD();
+  }
+
+  function startGame() {
+    resetGame();
+    state = 'playing';
+    startBtn.textContent = 'Restart';
+    startBtn.blur(); // so Space/Enter don't re-trigger the button
+  }
+
+  function updateHUD() {
+    scoreEl.textContent = 'Score: ' + score + ' / ' + WIN_SCORE;
+    livesEl.textContent = 'Lives: ' + lives;
+    timerEl.textContent = 'Time: ' + Math.ceil(timeLeft);
+  }
+
+  // ---------- Input ----------
+  document.addEventListener('keydown', function (e) {
+    const k = e.key.toLowerCase();
+    if (k === 'arrowleft' || k === 'a') { keys.left = true; e.preventDefault(); }
+    if (k === 'arrowright' || k === 'd') { keys.right = true; e.preventDefault(); }
+    if (k === 'r') startGame();
+  });
+  document.addEventListener('keyup', function (e) {
+    const k = e.key.toLowerCase();
+    if (k === 'arrowleft' || k === 'a') keys.left = false;
+    if (k === 'arrowright' || k === 'd') keys.right = false;
+  });
+  startBtn.addEventListener('click', startGame);
+
+  // ---------- Spawning ----------
+  function spawnObject() {
+    const isCoffee = Math.random() < 0.55;
+    const size = isCoffee ? 30 : 34;
+    objects.push({
+      type: isCoffee ? 'coffee' : 'paper',
+      x: size / 2 + Math.random() * (W - size),
+      y: -size,
+      w: size,
+      h: isCoffee ? 34 : 40,
+      speed: 70 + Math.random() * 90, // gentle, varied speeds
+      wobble: Math.random() * Math.PI * 2
+    });
+  }
+
+  // ---------- Collision ----------
+  function hits(a, b) {
+    // Both use centre x; goblin y is its feet, object y is its centre
+    const gLeft = a.x - a.w / 2, gRight = a.x + a.w / 2;
+    const gTop = a.y - a.h, gBottom = a.y;
+    const oLeft = b.x - b.w / 2, oRight = b.x + b.w / 2;
+    const oTop = b.y - b.h / 2, oBottom = b.y + b.h / 2;
+    return gLeft < oRight && gRight > oLeft && gTop < oBottom && gBottom > oTop;
+  }
+
+  function addMessage(text, color, x, y) {
+    messages.push({ text: text, color: color, x: x, y: y, life: 0.9 });
+  }
+
+  function endGame(result, reason) {
+    state = result;
+    endReason = reason;
+    keys.left = keys.right = false;
+  }
+
+  // ---------- Update ----------
+  function update(dt) {
+    // Fade feedback messages even after game over
+    for (let i = messages.length - 1; i >= 0; i--) {
+      messages[i].life -= dt;
+      messages[i].y -= 40 * dt;
+      if (messages[i].life <= 0) messages.splice(i, 1);
+    }
+
+    if (state !== 'playing') return; // no movement/spawning outside play
+
+    // Timer
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      updateHUD();
+      endGame('lost', "Time's up!");
+      return;
+    }
+
+    // Goblin movement
+    if (keys.left) goblin.x -= goblin.speed * dt;
+    if (keys.right) goblin.x += goblin.speed * dt;
+    goblin.x = Math.max(goblin.w / 2, Math.min(W - goblin.w / 2, goblin.x));
+
+    // Spawn
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnObject();
+      spawnTimer = SPAWN_INTERVAL;
+    }
+
+    // Move objects + collisions
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i];
+      o.y += o.speed * dt;
+      o.wobble += dt * 3;
+
+      if (hits(goblin, o)) {
+        objects.splice(i, 1); // removed immediately, so it can only count once
+        if (o.type === 'coffee') {
+          score += 1;
+          addMessage('+1 Coffee!', '#2e7d32', o.x, o.y);
+        } else {
+          lives -= 1;
+          addMessage('-1 Life! Assignment!', '#c62828', o.x, o.y);
+        }
+        updateHUD();
+        if (score >= WIN_SCORE) { endGame('won', 'You collected ' + WIN_SCORE + ' coffees!'); return; }
+        if (lives <= 0) { endGame('lost', 'Out of lives!'); return; }
+        continue;
+      }
+
+      if (o.y - o.h / 2 > H) objects.splice(i, 1); // off screen
+    }
+
+    updateHUD();
+  }
+
+  // ---------- Drawing ----------
+  function drawBackground() {
+    ctx.fillStyle = '#87c8ee';
+    ctx.fillRect(0, 0, W, H);
+    // Sun
+    ctx.fillStyle = '#ffe066';
+    ctx.beginPath(); ctx.arc(700, 70, 40, 0, Math.PI * 2); ctx.fill();
+    // Hills
+    ctx.fillStyle = '#7cc47a';
+    ctx.beginPath(); ctx.ellipse(200, GROUND + 20, 260, 80, 0, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(620, GROUND + 20, 300, 100, 0, Math.PI, 0); ctx.fill();
+    // Ground
+    ctx.fillStyle = '#5a9e4b';
+    ctx.fillRect(0, GROUND, W, H - GROUND);
+  }
+
+  function drawGoblin(x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    // Legs
+    ctx.fillStyle = '#3e6b2a';
+    ctx.fillRect(-14, -16, 10, 16);
+    ctx.fillRect(4, -16, 10, 16);
+    // Body (tunic)
+    ctx.fillStyle = '#8b5a2b';
+    ctx.fillRect(-18, -40, 36, 26);
+    // Arms
+    ctx.fillStyle = '#5fa83f';
+    ctx.fillRect(-26, -38, 8, 18);
+    ctx.fillRect(18, -38, 8, 18);
+    // Head
+    ctx.fillStyle = '#6fbf45';
+    ctx.beginPath(); ctx.arc(0, -52, 16, 0, Math.PI * 2); ctx.fill();
+    // Ears
+    ctx.beginPath();
+    ctx.moveTo(-14, -56); ctx.lineTo(-32, -66); ctx.lineTo(-12, -46); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(14, -56); ctx.lineTo(32, -66); ctx.lineTo(12, -46); ctx.closePath(); ctx.fill();
+    // Eyes
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-6, -55, 4, 0, Math.PI * 2); ctx.arc(6, -55, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(-6, -55, 2, 0, Math.PI * 2); ctx.arc(6, -55, 2, 0, Math.PI * 2); ctx.fill();
+    // Grin
+    ctx.strokeStyle = '#2d4a1c'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, -47, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawCoffee(o) {
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    // Steam
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, -18); ctx.quadraticCurveTo(-8 + Math.sin(o.wobble) * 3, -24, -4, -30);
+    ctx.moveTo(5, -18); ctx.quadraticCurveTo(1 + Math.sin(o.wobble + 1) * 3, -24, 5, -30);
+    ctx.stroke();
+    // Cup
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-12, -14, 24, 28);
+    ctx.fillStyle = '#6f4e37';
+    ctx.fillRect(-12, -14, 24, 6);
+    // Sleeve
+    ctx.fillStyle = '#c8a27a';
+    ctx.fillRect(-12, -2, 24, 9);
+    // Handle
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(14, 0, 6, -Math.PI / 2, Math.PI / 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPaper(o) {
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    ctx.rotate(Math.sin(o.wobble) * 0.25);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+    ctx.fillRect(-17, -20, 34, 40);
+    ctx.strokeRect(-17, -20, 34, 40);
+    // Lines
+    ctx.strokeStyle = '#90a4c8';
+    for (let ly = -10; ly <= 14; ly += 6) {
+      ctx.beginPath(); ctx.moveTo(-12, ly); ctx.lineTo(12, ly); ctx.stroke();
+    }
+    // Red "F"
+    ctx.fillStyle = '#d32f2f';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('F', 9, -8);
+    ctx.restore();
+  }
+
+  function drawMessages() {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px Arial';
+    messages.forEach(function (m) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, m.life / 0.9));
+      ctx.fillStyle = m.color;
+      ctx.fillText(m.text, m.x, Math.max(24, m.y));
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function drawOverlay(title, lines) {
+    ctx.fillStyle = 'rgba(20, 25, 35, 0.72)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 44px Arial';
+    ctx.fillText(title, W / 2, H / 2 - 50);
+    ctx.font = '20px Arial';
+    lines.forEach(function (line, i) {
+      ctx.fillText(line, W / 2, H / 2 + i * 30);
+    });
+  }
+
+  function draw() {
+    drawBackground();
+    objects.forEach(function (o) { o.type === 'coffee' ? drawCoffee(o) : drawPaper(o); });
+    drawGoblin(goblin.x, goblin.y);
+    drawMessages();
+
+    if (state === 'start') {
+      drawOverlay('Goblin Coffee Run', [
+        'Catch 8 coffees in 45 seconds. Avoid the assignment papers!',
+        'Move with ← → or A / D. You have 3 lives.',
+        'Press Start (or R) to play.'
+      ]);
+    } else if (state === 'won') {
+      drawOverlay('You Win!', [endReason, 'Final score: ' + score, 'Press R or Restart to play again.']);
+    } else if (state === 'lost') {
+      drawOverlay('Game Over', [endReason, 'Final score: ' + score, 'Press R or Restart to try again.']);
+    }
+  }
+
+  // ---------- Loop ----------
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); // cap so tab switching doesn't jump
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  resetGame();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
